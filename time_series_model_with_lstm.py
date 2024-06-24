@@ -32,6 +32,12 @@ plt.xlabel('Date')
 plt.ylabel('Price')
 plt.show()
 
+scaler = MinMaxScaler()
+price_scaled = scaler.fit_transform(price.reshape(-1, 1)).flatten()
+
+threshold = (price.max() - price.min()) * 10 / 100
+print('Threshold MAE:', threshold)
+
 x_train, x_test, y_train, y_test = train_test_split(price, date, test_size = 0.2)
 
 def windowed_dataset(series, window_size, batch_size, shuffle_buffer):
@@ -60,8 +66,18 @@ optimizers = tf.keras.optimizers.SGD(learning_rate=1.0000e-04, momentum=0.9)
 model.compile(loss=tf.keras.losses.Huber(),
               optimizer=optimizers,
               metrics=["mae"])
+
+class EarlyStoppingByMAE(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if logs.get('mae') < threshold and logs.get('val_mae') < threshold:
+            print("MAE and Val_MAE below threshold, stopping training")
+            self.model.stop_training = True
+
+callbacks = [EarlyStoppingByMAE()]
+
 model_history = model.fit(
     data_training,
     epochs=50,
     validation_data=data_testing,
+    callbacks=callbacks
 )

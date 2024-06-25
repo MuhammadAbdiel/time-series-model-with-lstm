@@ -38,34 +38,46 @@ price_scaled = scaler.fit_transform(price.reshape(-1, 1)).flatten()
 threshold = (price.max() - price.min()) * 10 / 100
 print('Threshold MAE:', threshold)
 
-x_train, x_test, y_train, y_test = train_test_split(price, date, test_size = 0.2)
+x_train, x_test, y_train, y_test = train_test_split(price, date, test_size = 0.2, shuffle=False)
 
 def windowed_dataset(series, window_size, batch_size, shuffle_buffer):
   series = tf.expand_dims(series, axis=-1)
   data_series = tf.data.Dataset.from_tensor_slices(series)
-  data_series = data_series.window(window_size + 1, shift=1, drop_remainder = True)
+  data_series = data_series.window(window_size + 1, shift=1, drop_remainder=True)
   data_series = data_series.flat_map(lambda w: w.batch(window_size + 1))
   data_series = data_series.shuffle(shuffle_buffer)
   data_series = data_series.map(lambda w: (w[:-1], w[-1:]))
   return data_series.batch(batch_size).prefetch(1)
 
-data_training = windowed_dataset(x_train, window_size=64, batch_size=128, shuffle_buffer=1000)
-data_testing = windowed_dataset(x_test, window_size=64, batch_size=128, shuffle_buffer=1000)
+window_size = 128
+batch_size = 64
+shuffle_buffer = 1000
+
+data_training = windowed_dataset(x_train, window_size, batch_size, shuffle_buffer)
+data_testing = windowed_dataset(x_test, window_size, batch_size, shuffle_buffer)
 
 model = tf.keras.models.Sequential([
-  tf.keras.layers.LSTM(64, return_sequences=True),
-  tf.keras.layers.LSTM(64),
-  tf.keras.layers.Dense(30, activation="relu"),
+  tf.keras.layers.LSTM(128, return_sequences=True),
+  tf.keras.layers.LSTM(128),
+  tf.keras.layers.Dense(50, activation="relu"),
   tf.keras.layers.Dropout(0.5),
-  tf.keras.layers.Dense(10, activation="relu"),
+  tf.keras.layers.Dense(20, activation="relu"),
   tf.keras.layers.Dropout(0.5),
   tf.keras.layers.Dense(1),
 ])
 
-optimizers = tf.keras.optimizers.SGD(learning_rate=1.0000e-04, momentum=0.9)
-model.compile(loss=tf.keras.losses.Huber(),
+optimizers = tf.keras.optimizers.Adam(learning_rate=1e-3)
+model.compile(loss='mse',
               optimizer=optimizers,
               metrics=["mae"])
+
+def scheduler(epoch, lr):
+    if epoch < 20:
+        return lr
+    else:
+        return lr * tf.math.exp(-0.1)
+
+lr_scheduler = tf.keras.callbacks.LearningRateScheduler(scheduler)
 
 class EarlyStoppingByMAE(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -73,11 +85,11 @@ class EarlyStoppingByMAE(tf.keras.callbacks.Callback):
             print("MAE and Val_MAE below threshold, stopping training")
             self.model.stop_training = True
 
-callbacks = [EarlyStoppingByMAE()]
+callbacks = [EarlyStoppingByMAE(), lr_scheduler]
 
 model_history = model.fit(
     data_training,
-    epochs=50,
+    epochs=200,
     validation_data=data_testing,
     callbacks=callbacks
 )
